@@ -40,5 +40,12 @@ reg_5.add(Field(name='spare_0',bit=1,sw_access=ReadWrite,hw_access=ReadOnly,init
 reg_5.add(Field(name='spare_1',bit=1,sw_access=ReadWrite,hw_access=ReadOnly,init_value=0b0,description='spare 1'),offset = 1)
 regBank.add(reg_5, offset=0x14)
 
+##### override #####
+reg_6 = Register(name='override',bit=32,description="manual access override",reg_type=Normal, parity=True)
+reg_6.add(Field(name='ro_reg',bit=1,sw_access=ReadOnly,hw_access=ReadOnly,init_value=0b0,description='force RO'),offset = 0)
+reg_6.add(Field(name='rw_reg',bit=1,sw_access=ReadWrite,hw_access=ReadWrite,init_value=0b0,description='force RW'),offset = 1)
+reg_6.add(Field(name='hw_only',bit=1,sw_access=ReadWrite,hw_access=WriteOnly,init_value=0b0,description='hw write only'),offset = 2)
+regBank.add(reg_6, offset=0x18)
+
 if __name__ == "__main__":
     regBank.generate('build')

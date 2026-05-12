@@ -5,9 +5,9 @@ SV to Python Register Generator
 从 SystemVerilog 模块例化代码生成 address_planner 风格的 Python 寄存器代码。
 
 输入格式:
-    module <name>
+    module <name> ["module description"]
     //<group_name> ["group description"]
-    .<port_name> [ ( <signal> ) ] [,] // <direction> [<width>] ["field description"]
+    .<port_name> [ ( <signal> ) ] [,] // <direction> [<width>] [sw=X] [hw=Y] ["field description"]
     endmodule
 
     其中 () 内信号名和尾部逗号均可省略，以下写法等价:
@@ -20,9 +20,11 @@ SV to Python Register Generator
       - width=N     如 width=8 →  8 bit
       不写位宽时默认 1 bit。
 
-    方向决定 access 类型:
+    方向决定 access 类型（可通过 sw=/hw= 手动覆盖）:
       - input  →  sw=ReadWrite, hw=ReadOnly
       - output →  sw=ReadOnly,  hw=ReadWrite
+      例: // input, sw=ReadOnly, hw=ReadOnly   (强制 RO)
+          // input, hw=WriteOnly                (只覆盖 hw)
 
     行首 // 为组分割，组内信号位宽总和超过 32 时自动拆分:
       - 第一块保持原名
@@ -33,6 +35,7 @@ SV to Python Register Generator
 用法:
     python sv2reg.py demo.sv                          # 默认输出 <module>_reg_rf_gen.py
     python sv2reg.py demo.sv -o output.py             # 指定输出文件
+    python sv2reg.py demo.sv -r                       # 生成后自动执行
 
 示例:
     module sys_pcie_eth_wrap
@@ -40,6 +43,7 @@ SV to Python Register Generator
     .lanea      // input "enable"
     .lanec      // input [10:0] "counter"
     .data       // output, width=8 "data bus"
+    .ro_reg     // input, sw=ReadOnly, hw=ReadOnly "force read-only"
     endmodule
 """
 
@@ -50,8 +54,8 @@ import argparse
 
 def parse_sv(filepath: str):
     """
-    解析 SV 文件，返回 (module_name, groups)
-    groups: [(group_name, [(port_name, direction, width), ...]), ...]
+    解析 SV 文件，返回 (module_name, module_desc, groups)
+    groups: [(group_name, group_desc, [(port_name, direction, width, desc, sw_ov, hw_ov), ...]), ...]
     """
     with open(filepath, 'r') as f:
         text = f.read()
@@ -85,12 +89,15 @@ def parse_sv(filepath: str):
             current_ports = []
             continue
 
-        # port connection: .port_name [( signal )] , // direction[, width=N] ["desc"]
-        # 小括号内信号名可有可无
+        # port connection: .port_name [( signal )] , // direction[, width=N] [sw=X] [hw=Y] ["desc"]
+        # 小括号内信号名和尾部逗号均可省略
+        # sw=/hw= 可手动覆盖 access 类型（默认由 direction 决定）
         m = re.match(
             r'\.(\w+)(?:\s*\([^)]*\))?\s*,?\s*//\s*(\w+)'
             r'(?:[,\s]+width\s*[=:]\s*(\d+))?'
             r'(?:\s*\[(\d+):(\d+)\])?'
+            r'(?:[,\s]+sw\s*[=:]\s*(\w+))?'
+            r'(?:[,\s]+hw\s*[=:]\s*(\w+))?'
             r'(?:[,\s]*"([^"]*)")?',
             line, re.IGNORECASE
         )
@@ -105,8 +112,10 @@ def parse_sv(filepath: str):
                 width = int(m.group(3))
             else:
                 width = 1
-            description = m.group(6) or ''
-            current_ports.append((port_name, direction, width, description))
+            sw_override = m.group(6) or ''
+            hw_override = m.group(7) or ''
+            description = m.group(8) or ''
+            current_ports.append((port_name, direction, width, description, sw_override, hw_override))
             continue
 
     # 收尾最后一个 group
@@ -121,15 +130,21 @@ def make_init_value(width: int) -> str:
     return '0b' + '0' * width
 
 
-def direction_to_access(direction: str):
+def direction_to_access(direction: str, sw_override='', hw_override=''):
     """
+    由 direction 决定默认值，sw=/hw= 手动覆盖。
     input  -> sw=ReadWrite, hw=ReadOnly
     output -> sw=ReadOnly,  hw=ReadWrite
     """
     if direction == 'input':
-        return 'ReadWrite', 'ReadOnly'
+        sw, hw = 'ReadWrite', 'ReadOnly'
     else:
-        return 'ReadOnly', 'ReadWrite'
+        sw, hw = 'ReadOnly', 'ReadWrite'
+    if sw_override:
+        sw = sw_override
+    if hw_override:
+        hw = hw_override
+    return sw, hw
 
 
 REG_BITS = 32  # 每个寄存器的位宽
@@ -138,26 +153,25 @@ REG_BITS = 32  # 每个寄存器的位宽
 def split_ports(ports: list) -> list:
     """
     将一组 ports 按 REG_BITS 分割成多个块。
-    返回 [[(name, direction, width, desc), ...], ...]
+    返回 [[(name, direction, width, desc, sw_ov, hw_ov), ...], ...]
     """
     chunks = []
     current_chunk = []
     current_bits = 0
 
-    for name, direction, width, desc in ports:
+    for name, direction, width, desc, sw_ov, hw_ov in ports:
         if width > REG_BITS:
-            # 单个信号就超了，独占一个寄存器
             if current_chunk:
                 chunks.append(current_chunk)
                 current_chunk = []
                 current_bits = 0
-            chunks.append([(name, direction, width, desc)])
+            chunks.append([(name, direction, width, desc, sw_ov, hw_ov)])
         elif current_bits + width > REG_BITS:
             chunks.append(current_chunk)
-            current_chunk = [(name, direction, width, desc)]
+            current_chunk = [(name, direction, width, desc, sw_ov, hw_ov)]
             current_bits = width
         else:
-            current_chunk.append((name, direction, width, desc))
+            current_chunk.append((name, direction, width, desc, sw_ov, hw_ov))
             current_bits += width
 
     if current_chunk:
@@ -189,13 +203,13 @@ def generate_code(module_name: str, module_desc: str, groups: list) -> str:
         # 对组内重名 port 去重
         seen = {}
         clean_ports = []
-        for name, direction, width, desc in ports:
+        for name, direction, width, desc, sw_ov, hw_ov in ports:
             if name in seen:
                 seen[name] += 1
-                clean_ports.append((f"{name}_{seen[name]}", direction, width, desc))
+                clean_ports.append((f"{name}_{seen[name]}", direction, width, desc, sw_ov, hw_ov))
             else:
                 seen[name] = 0
-                clean_ports.append((name, direction, width, desc))
+                clean_ports.append((name, direction, width, desc, sw_ov, hw_ov))
 
         # 按 32bit 分割
         chunks = split_ports(clean_ports)
@@ -220,8 +234,8 @@ def generate_code(module_name: str, module_desc: str, groups: list) -> str:
             )
 
             field_offset = 0
-            for port_name, direction, width, desc in chunk:
-                sw_acc, hw_acc = direction_to_access(direction)
+            for port_name, direction, width, desc, sw_ov, hw_ov in chunk:
+                sw_acc, hw_acc = direction_to_access(direction, sw_ov, hw_ov)
                 init_val = make_init_value(width)
                 lines.append(
                     f"{reg_var}.add(Field("
@@ -249,12 +263,12 @@ def main():
     parser = argparse.ArgumentParser(
         description='SV to Python Register Generator',
         epilog=(
-            '输入格式: module <name>\n'
+            '输入格式: module <name> ["desc"]\n'
             '         //<group_name> ["desc"]\n'
-            '         .<port> [ (sig) ] [,] // <direction> [<width>] ["desc"]\n'
+            '         .<port> [ (sig) ] [,] // <direction> [<width>] [sw=X] [hw=Y] ["desc"]\n'
             '         (信号名和逗号均可省略)\n'
             '位宽: [MSB:LSB] 或 width=N，默认 1bit\n'
-            '方向: input->RW/RO, output->RO/RW\n'
+            '方向: input->RW/RO, output->RO/RW, 可用 sw=/hw= 手动覆盖\n'
             '描述: ""内文字填入 description 字段\n'
             '默认输出: <module>_reg_rf_gen.py'
         ),
@@ -263,7 +277,12 @@ def main():
     parser.add_argument('input', help='输入的 SV 文件路径')
     parser.add_argument(
         '-o', '--output',
-        help='输出的 Python 文件路径（默认打印到 stdout）'
+        help='输出的 Python 文件路径（默认 <module>_reg_rf_gen.py）'
+    )
+    parser.add_argument(
+        '-r', '--run',
+        action='store_true',
+        help='生成后自动执行输出的 Python 文件'
     )
     args = parser.parse_args()
 
@@ -281,6 +300,14 @@ def main():
     with open(out_path, 'w') as f:
         f.write(code)
     print(f"✓ 已生成: {out_path}")
+
+    # 自动执行
+    if args.run:
+        print(f"▶ 执行: {out_path}")
+        import subprocess
+        ret = subprocess.run(['python3', out_path])
+        if ret.returncode != 0:
+            sys.exit(ret.returncode)
 
 
 if __name__ == '__main__':

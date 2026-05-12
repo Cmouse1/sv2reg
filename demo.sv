@@ -23,4 +23,9 @@ module sys_xxx "top register block"
 .spare_0                 // input "spare 0"
 .spare_1                 // input "spare 1"
 
+//override "manual access override"
+.ro_reg                  // input, sw=ReadOnly, hw=ReadOnly "force RO"
+.rw_reg                  // output, sw=ReadWrite, hw=ReadWrite "force RW"
+.hw_only                 // input, hw=WriteOnly "hw write only"
+
 endmodule
