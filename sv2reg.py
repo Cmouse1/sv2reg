@@ -7,7 +7,7 @@ SV to Python Register Generator
 输入格式:
     module <name> ["module description"]
     //<group_name> ["group description"]
-    .<port_name> [ ( <signal> ) ] [,] // <direction> [<width>] [sw=X] [hw=Y] ["field description"]
+    .<port_name> [ ( <signal> ) ] [,] // <direction> [<width>] [sw=X] [hw=Y] [init=X] ["field description"]
     endmodule
 
     其中 () 内信号名和尾部逗号均可省略，以下写法等价:
@@ -25,6 +25,11 @@ SV to Python Register Generator
       - output →  sw=ReadOnly,  hw=ReadWrite
       例: // input, sw=ReadOnly, hw=ReadOnly   (强制 RO)
           // input, hw=WriteOnly                (只覆盖 hw)
+
+    init=X 可手动指定 init_value（默认按位宽全填 0），支持:
+      - init=0x5A  （十六进制）
+      - init=42     （十进制）
+      - init=0b1010（二进制）
 
     行首 // 为组分割，组内信号位宽总和超过 32 时自动拆分:
       - 第一块保持原名
@@ -44,6 +49,7 @@ SV to Python Register Generator
     .lanec      // input [10:0] "counter"
     .data       // output, width=8 "data bus"
     .ro_reg     // input, sw=ReadOnly, hw=ReadOnly "force read-only"
+    .init_reg   // input, width=8, init=0x5A "with init value"
     endmodule
 """
 
@@ -55,7 +61,7 @@ import argparse
 def parse_sv(filepath: str):
     """
     解析 SV 文件，返回 (module_name, module_desc, groups)
-    groups: [(group_name, group_desc, [(port_name, direction, width, desc, sw_ov, hw_ov), ...]), ...]
+    groups: [(group_name, group_desc, [(port_name, direction, width, desc, sw_ov, hw_ov, init_ov), ...]), ...]
     """
     with open(filepath, 'r') as f:
         text = f.read()
@@ -115,7 +121,10 @@ def parse_sv(filepath: str):
             sw_override = m.group(6) or ''
             hw_override = m.group(7) or ''
             description = m.group(8) or ''
-            current_ports.append((port_name, direction, width, description, sw_override, hw_override))
+            # init= 位置无关，单独提取
+            init_m = re.search(r'init\s*[=:]\s*([^,\s"]+)', line)
+            init_override = init_m.group(1) if init_m else ''
+            current_ports.append((port_name, direction, width, description, sw_override, hw_override, init_override))
             continue
 
     # 收尾最后一个 group
@@ -153,25 +162,25 @@ REG_BITS = 32  # 每个寄存器的位宽
 def split_ports(ports: list) -> list:
     """
     将一组 ports 按 REG_BITS 分割成多个块。
-    返回 [[(name, direction, width, desc, sw_ov, hw_ov), ...], ...]
+    返回 [[(name, direction, width, desc, sw_ov, hw_ov, init_val), ...], ...]
     """
     chunks = []
     current_chunk = []
     current_bits = 0
 
-    for name, direction, width, desc, sw_ov, hw_ov in ports:
+    for name, direction, width, desc, sw_ov, hw_ov, init_val in ports:
         if width > REG_BITS:
             if current_chunk:
                 chunks.append(current_chunk)
                 current_chunk = []
                 current_bits = 0
-            chunks.append([(name, direction, width, desc, sw_ov, hw_ov)])
+            chunks.append([(name, direction, width, desc, sw_ov, hw_ov, init_val)])
         elif current_bits + width > REG_BITS:
             chunks.append(current_chunk)
-            current_chunk = [(name, direction, width, desc, sw_ov, hw_ov)]
+            current_chunk = [(name, direction, width, desc, sw_ov, hw_ov, init_val)]
             current_bits = width
         else:
-            current_chunk.append((name, direction, width, desc, sw_ov, hw_ov))
+            current_chunk.append((name, direction, width, desc, sw_ov, hw_ov, init_val))
             current_bits += width
 
     if current_chunk:
@@ -203,13 +212,13 @@ def generate_code(module_name: str, module_desc: str, groups: list) -> str:
         # 对组内重名 port 去重
         seen = {}
         clean_ports = []
-        for name, direction, width, desc, sw_ov, hw_ov in ports:
+        for name, direction, width, desc, sw_ov, hw_ov, init_val in ports:
             if name in seen:
                 seen[name] += 1
-                clean_ports.append((f"{name}_{seen[name]}", direction, width, desc, sw_ov, hw_ov))
+                clean_ports.append((f"{name}_{seen[name]}", direction, width, desc, sw_ov, hw_ov, init_val))
             else:
                 seen[name] = 0
-                clean_ports.append((name, direction, width, desc, sw_ov, hw_ov))
+                clean_ports.append((name, direction, width, desc, sw_ov, hw_ov, init_val))
 
         # 按 32bit 分割
         chunks = split_ports(clean_ports)
@@ -234,14 +243,17 @@ def generate_code(module_name: str, module_desc: str, groups: list) -> str:
             )
 
             field_offset = 0
-            for port_name, direction, width, desc, sw_ov, hw_ov in chunk:
+            for port_name, direction, width, desc, sw_ov, hw_ov, init_val in chunk:
                 sw_acc, hw_acc = direction_to_access(direction, sw_ov, hw_ov)
-                init_val = make_init_value(width)
+                if init_val:
+                    init_value_str = init_val
+                else:
+                    init_value_str = make_init_value(width)
                 lines.append(
                     f"{reg_var}.add(Field("
                     f"name='{port_name}',bit={width},"
                     f"sw_access={sw_acc},hw_access={hw_acc},"
-                    f"init_value={init_val},description='{desc}'),offset = {field_offset})"
+                    f"init_value={init_value_str},description='{desc}'),offset = {field_offset})"
                 )
                 field_offset += width
 
@@ -265,10 +277,11 @@ def main():
         epilog=(
             '输入格式: module <name> ["desc"]\n'
             '         //<group_name> ["desc"]\n'
-            '         .<port> [ (sig) ] [,] // <direction> [<width>] [sw=X] [hw=Y] ["desc"]\n'
+            '         .<port> [ (sig) ] [,] // <direction> [<width>] [sw=X] [hw=Y] [init=X] ["desc"]\n'
             '         (信号名和逗号均可省略)\n'
             '位宽: [MSB:LSB] 或 width=N，默认 1bit\n'
             '方向: input->RW/RO, output->RO/RW, 可用 sw=/hw= 手动覆盖\n'
+            'init: 手动指定 init_value（默认按位宽填 0）\n'
             '描述: ""内文字填入 description 字段\n'
             '默认输出: <module>_reg_rf_gen.py'
         ),
