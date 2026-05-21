@@ -93,13 +93,13 @@ command! -range AlignModulePort <line1>,<line2>call AlignModulePortRange()
 " ---------------------------------------------------------------------------
 function! AlignModulePortAuto() abort
   " Locate the start marker anywhere in the buffer.
-  let l:start_marker = search('<MODULE_PORT_START>', 'w')
+  let l:start_marker = search('[〈<]MODULE_PORT_START[〉>]', 'w')
   if l:start_marker == 0
     echohl ErrorMsg | echo 'AlignModulePort: <MODULE_PORT_START> not found' | echohl None
     return
   endif
   " Locate the end marker from the start marker position.
-  let l:end_marker = search('<MODULE_PORT_END>', 'W')
+  let l:end_marker = search('[〈<]MODULE_PORT_END[〉>]', 'W')
   if l:end_marker == 0
     echohl ErrorMsg | echo 'AlignModulePort: <MODULE_PORT_END> not found' | echohl None
     return
