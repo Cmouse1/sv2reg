@@ -44,7 +44,7 @@ function! AlignModulePort(start_line, end_line) abort
   let l:max_width = repeat([0], l:num_cols)
   for l:row in l:rows
     for l:i in range(l:num_cols)
-      let l:w = len(l:row[l:i])
+      let l:w = len(substitute(l:row[l:i], ' ', '', 'g'))
       if l:w > l:max_width[l:i]
         let l:max_width[l:i] = l:w
       endif
@@ -62,7 +62,7 @@ function! AlignModulePort(start_line, end_line) abort
     let l:parts = []
     for l:i in range(l:num_cols)
       let l:text = l:row[l:i]
-      let l:pad  = l:col_width[l:i] - len(l:text)
+      let l:pad  = l:col_width[l:i] - len(substitute(l:text, ' ', '', 'g'))
       if l:pad < 0
         let l:pad = 0
       endif
