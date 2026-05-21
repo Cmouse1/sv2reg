@@ -1,11 +1,11 @@
-" csv_table_align.vim — Align comma-separated table columns
+" AlignModulePort.vim — Align module port declarations
 " ============================================================
 " Core function:
-"   CsvTableAlign(start_line, end_line)
+"   AlignModulePort(start_line, end_line)
 "     -> Aligns columns for the given line range.
 "
 " Convenience command:
-"   :CsvTableAlign           -> :'<,'>call CsvTableAlignRange()
+"   :AlignModulePort           -> :'<,'>call AlignModulePortRange()
 "
 " Algorithm:
 "   Pass 1: split each line by comma, trim each field, track max width per column.
@@ -13,9 +13,9 @@
 "   Pass 3: rebuild each line: text + space-padding to col_width + ',' + ...
 
 " ---------------------------------------------------------------------------
-" CsvTableAlign(start_line, end_line)
+" AlignModulePort(start_line, end_line)
 " ---------------------------------------------------------------------------
-function! CsvTableAlign(start_line, end_line) abort
+function! AlignModulePort(start_line, end_line) abort
   let l:lines = getline(a:start_line, a:end_line)
   if empty(l:lines)
     return
@@ -80,39 +80,39 @@ function! CsvTableAlign(start_line, end_line) abort
 endfunction
 
 " ---------------------------------------------------------------------------
-" CsvTableAlignRange — range wrapper
+" AlignModulePortRange — range wrapper
 " ---------------------------------------------------------------------------
-function! CsvTableAlignRange() range abort
-  call CsvTableAlign(a:firstline, a:lastline)
+function! AlignModulePortRange() range abort
+  call AlignModulePort(a:firstline, a:lastline)
 endfunction
 
-command! -range CsvTableAlign <line1>,<line2>call CsvTableAlignRange()
+command! -range AlignModulePort <line1>,<line2>call AlignModulePortRange()
 
 " ---------------------------------------------------------------------------
-" CsvTableAlignPorts — auto-locate <MODULE_PORT_START> / <MODULE_PORT_END>
+" AlignModulePortAuto — auto-locate <MODULE_PORT_START> / <MODULE_PORT_END>
 " ---------------------------------------------------------------------------
-function! CsvTableAlignPorts() abort
+function! AlignModulePortAuto() abort
   " Locate the start marker anywhere in the buffer.
   let l:start_marker = search('<MODULE_PORT_START>', 'w')
   if l:start_marker == 0
-    echohl ErrorMsg | echo 'CsvTableAlignPorts: <MODULE_PORT_START> not found' | echohl None
+    echohl ErrorMsg | echo 'AlignModulePort: <MODULE_PORT_START> not found' | echohl None
     return
   endif
   " Locate the end marker from the start marker position.
   let l:end_marker = search('<MODULE_PORT_END>', 'W')
   if l:end_marker == 0
-    echohl ErrorMsg | echo 'CsvTableAlignPorts: <MODULE_PORT_END> not found' | echohl None
+    echohl ErrorMsg | echo 'AlignModulePort: <MODULE_PORT_END> not found' | echohl None
     return
   endif
-  " The table lines are between the two markers (exclusive).
+  " The port lines are between the two markers (exclusive).
   let l:s = l:start_marker + 1
   let l:e = l:end_marker - 1
   if l:s > l:e
-    echohl WarningMsg | echo 'CsvTableAlignPorts: no lines between markers' | echohl None
+    echohl WarningMsg | echo 'AlignModulePort: no lines between markers' | echohl None
     return
   endif
-  call CsvTableAlign(l:s, l:e)
-  echo 'CsvTableAlignPorts: aligned lines ' . l:s . '-' . l:e
+  call AlignModulePort(l:s, l:e)
+  echo 'AlignModulePort: aligned lines ' . l:s . '-' . l:e
 endfunction
 
-command! CsvTableAlignPorts call CsvTableAlignPorts()
+command! AlignModulePortAuto call AlignModulePortAuto()
